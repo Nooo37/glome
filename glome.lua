@@ -2,15 +2,24 @@ local dbp = require("dbus_proxy")
 local GLib = require("lgi").GLib
 
 --[[
-The goal is to convert both menu interfaces to a more inefficient but more
-easily hackable structure like this:
+This module first converts both the appmenu and the gtk interface into something like the following.
+(ID is holding either a number (appmenu) or a string (gtk) that is needed to invoke the action)
+
 {
-    { path = {"Menu1", "SubMenu", "SubSubMenu", "Item1"}, id = 69, ... },
-    { path = {"Menu1", "AnotherSubMenu", "Item2"}, id = 420, ... },
+    {
+        label = "Item1",
+        path = {"Menu1", "SubMenu", "SubSubMenu", "Item1"},
+        id = 69,
+        ...
+    },
+    {
+        label = "Item2",
+        path = {"Menu1", "AnotherSubMenu", "Item2"},
+        id = "unity.some-action",
+        ...
+    },
     ...
 }
-Already done for appmenu (in the make_flat function), still has to be done for
-the gtk interface
 --]]
 
 local M = {
@@ -25,6 +34,16 @@ M.registrar = dbp.Proxy:new {
     path = "/com/canonical/AppMenu/Registrar"
 }
 
+-- Helper
+
+local function shallow_copy(t)
+    local res = {}
+    for k,v in pairs(t) do
+      res[k] = v
+    end
+    return res
+end
+
 --[[
 
 APPMENU interface specific functions
@@ -32,16 +51,8 @@ APPMENU interface specific functions
 --]]
 
 function M.appmenu.make_flat(rawt)
-    local function shallow_copy(t)
-        local res = {}
-        for k,v in pairs(t) do
-          res[k] = v
-        end
-        return res
-    end
-
-    local recursive_march, result_final
-    recursive_march = function(t, path)
+    local results = {}
+    local function explore(t, path)
         local result = nil
         if type(t) == "table" then
             result = {}
@@ -50,25 +61,24 @@ function M.appmenu.make_flat(rawt)
                     result["id"] = sub
                 elseif type(sub) == "table" and sub["label"] then
                     table.insert(path, sub["label"])
-                    local result_intermediate = {}
+                    local entry = {}
                     for key, value in pairs(sub) do
-                        result_intermediate[key] = value
+                        entry[key] = value
                         result[key] = value
                     end
-                    result_intermediate.path = path
-                    result_intermediate.id = result.id
-                    table.insert(result_final, result_intermediate)
+                    entry.path = path
+                    entry.id = result.id
+                    table.insert(results, entry)
                 else
                     local path_copy = shallow_copy(path)
-                    result[idx] = recursive_march(sub, path_copy)
+                    result[idx] = explore(sub, path_copy)
                 end
             end
         end
         return result
     end
-    result_final = {}
-    recursive_march(rawt, {})
-    return result_final
+    explore(rawt, {})
+    return results
 end
 
 function M.appmenu.get_menu_object(window_id)
@@ -117,13 +127,52 @@ GTK inteface specfic functions
 
 local function get_number_array(n)
     local res = {}
-    for i=1,n do
+    for i=0,n do
         table.insert(res, i)
     end
     return res
 end
 
-local number_array = get_number_array(1024)
+local number_array = get_number_array(2048)
+
+function M.gtk.make_flat(rawt)
+    local function get_by_id(ids)
+        for _, v in ipairs(rawt) do
+            if v[1] == ids[1] and v[2] == ids[2] then return v[3] end
+        end
+        return nil
+    end
+
+    local results = {}
+    local function explore(ids, label_list)
+        for _, menu in ipairs(get_by_id(ids)) do
+            if type(menu) ~= "table" then return end
+            local new_label_list = shallow_copy(label_list)
+            table.insert(new_label_list, menu["label"])
+            local entry = {
+                path = new_label_list,
+                label = menu["label"],
+                id = menu["action"], -- calling it ID analogous to appmenu
+                accel = menu["accel"],
+                target = menu["target"]
+            }
+
+            if menu[":section"] then
+                explore(menu[":section"], label_list)
+            end
+
+            if menu[":submenu"] then
+                explore(menu[":submenu"], new_label_list)
+            end
+
+            if menu["label"] then
+                table.insert(results, entry)
+            end
+        end
+    end
+    explore({0, 0}, {})
+    return results
+end
 
 function M.gtk.get_menu_object(gtk_bus_name, gtk_obj_path)
     return dbp.Proxy:new {
@@ -154,6 +203,11 @@ function M.gtk.call_event(action, gtk_bus_name, gtk_obj_path)
     if not myaction then return nil end
     action = action:gsub("^unity.", "")
     myaction:Activate(action, {}, {})
+end
+
+function M.gtk.get_menu(gtk_bus_name, gtk_obj_path)
+    local res = M.gtk.get_raw_menu(gtk_bus_name, gtk_obj_path)
+    return M.gtk.make_flat(res)
 end
 
 

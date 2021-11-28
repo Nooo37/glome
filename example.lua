@@ -10,7 +10,7 @@ local function menutest(xid)
 end
 
 local function gtktest(gtk_bus_name, gtk_obj_path)
-    local k = glome.gtk.get_raw_menu(gtk_bus_name, gtk_obj_path)
+    local k = glome.gtk.get_menu(gtk_bus_name, gtk_obj_path)
     pprint(k)
     local id = "unity.file-open-location" -- a GIMP specific action
     glome.gtk.call_event(id, gtk_bus_name, gtk_obj_path)
@@ -18,7 +18,5 @@ end
 
 -- you can get the info that needs to be passed here with the get.sh script
 
--- if the window implements the appmenu interface
-menutest(62914567) -- pass an x window id for a window that has exported menubar
--- if the window implements the gtk interface
-gtktest(":1.987", "/org/appmenu/gtk/window/0") -- pass name and object path of gimp or inkscape
+menutest(52428807) -- takes window id
+gtktest(":1.801", "/org/appmenu/gtk/window/0") -- takes gtk bus and object
